@@ -1,6 +1,7 @@
 import type { ChatMessage, ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResult, ContentPart, LLMProvider } from './types'
 import { SSEParserStream } from '../core/sse-parser'
 import { decodeBase64Text, isTextMediaType, resolveFilePart } from '../utils/file'
+import { isBrowserContext } from '../utils/browser'
 import { createAPIError } from '../core/errors'
 
 export interface AnthropicConfig {
@@ -18,7 +19,8 @@ export function createAnthropic(config: AnthropicConfig): LLMProvider {
       if (!config.apiKey) {
         throw new Error('[vue-llm] Anthropic API key is required. Pass it via createAnthropic({ apiKey: "..." })')
       }
-      if (!config.dangerouslyAllowBrowser && typeof window !== 'undefined') {
+      // API keys require explicit opt-in in both window and Worker browser contexts.
+      if (!config.dangerouslyAllowBrowser && isBrowserContext()) {
         throw new Error(
           '[vue-llm] API keys must not be used in the browser. '
           + 'Use a server proxy (/api/chat) to keep keys safe. '
@@ -136,9 +138,11 @@ export function createAnthropic(config: AnthropicConfig): LLMProvider {
               case 'message_delta': {
                 const delta = parsed.delta as { stop_reason?: string }
                 const usage = parsed.usage as { output_tokens?: number } | undefined
-                const reason = delta?.stop_reason === 'tool_use' ? 'tool-calls'
-                  : delta?.stop_reason === 'max_tokens' ? 'length'
-                  : 'stop'
+                const reason = delta?.stop_reason === 'tool_use'
+                  ? 'tool-calls'
+                  : delta?.stop_reason === 'max_tokens'
+                    ? 'length'
+                    : 'stop'
 
                 controller.enqueue({
                   type: 'finish',
