@@ -47,7 +47,9 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionRetur
     status.value = 'submitted'
 
     abortController?.abort()
-    abortController = new AbortController()
+    // Keep this request's signal so a replaced request cannot read the next controller.
+    const requestController = new AbortController()
+    abortController = requestController
 
     try {
       options.provider.validateConfig()
@@ -63,8 +65,10 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionRetur
       const { stream } = await tracedChat(options.provider, {
         model: toValue(options.model),
         messages,
-        signal: abortController.signal,
+        signal: requestController.signal,
       }, id)
+
+      if (requestController.signal.aborted) return completion.value
 
       status.value = 'streaming'
       const reader = stream.getReader()
@@ -72,9 +76,10 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionRetur
       let usage: Usage | undefined
 
       while (true) {
-        if (abortController.signal.aborted) break
+        if (requestController.signal.aborted) break
 
         const { done, value } = await reader.read()
+        if (requestController.signal.aborted) break
         if (done) break
 
         if (value.type === 'text-delta') {
@@ -88,20 +93,21 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionRetur
       }
 
       reader.releaseLock()
+      if (requestController.signal.aborted) return completion.value
+
       status.value = 'ready'
       options.onFinish?.(completion.value, { finishReason, usage })
 
       return completion.value
     } catch (err) {
-      if (!abortController || abortController.signal.aborted) {
-        status.value = 'ready'
-        return completion.value
-      }
+      if (requestController.signal.aborted) return completion.value
       const e = err instanceof Error ? err : new Error(String(err))
       error.value = e
       status.value = 'error'
       options.onError?.(e)
       return completion.value
+    } finally {
+      if (abortController === requestController) abortController = null
     }
   }
 
