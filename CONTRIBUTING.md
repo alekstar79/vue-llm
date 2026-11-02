@@ -19,12 +19,15 @@ Node 20 or 22. If `npm install` fails on Node 20 with `Cannot read properties of
 | `npm test` | Unit tests (Vue 3) |
 | `npm run test:vue2` | Unit tests against Vue 2.7 |
 | `npm run typecheck` | `vue-tsc`, including the Chat UI registry components |
-| `npm run lint` | ESLint |
+| `npm run lint` | ESLint, including code style |
+| `npm run lint:fix` | Fix what ESLint can fix, formatting included |
 | `npm run build` | Build the package into `dist/` |
 | `npm run docs:dev` | Docs site with live demos at http://localhost:5173 |
 | `npm run dev` | Local playground app |
 
 CI runs all of them, so run them before opening a pull request.
+
+Two bots help on pull requests: [autofix.ci](https://autofix.ci) commits `npm run lint:fix` to your branch, so formatting fixes itself, and [pkg.pr.new](https://pkg.pr.new) comments an install command for a build of your branch.
 
 ## Project layout
 

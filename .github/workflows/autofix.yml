@@ -1,0 +1,25 @@
+name: autofix.ci
+
+# Runs `eslint --fix` on pull requests; the autofix.ci app commits the result to the PR branch,
+# so contributors don't have to fix formatting by hand. Needs https://github.com/apps/autofix-ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  autofix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint:fix
+      # autofix.ci asks for the action pinned to a commit
+      - uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a # v1.3.4
