@@ -55,9 +55,9 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionRetur
       const system = toValue(options.system)
       const messages = system
         ? [
-            { role: 'system' as const, content: system },
-            { role: 'user' as const, content: text },
-          ]
+          { role: 'system' as const, content: system },
+          { role: 'user' as const, content: text },
+        ]
         : [{ role: 'user' as const, content: text }]
 
       const { stream } = await tracedChat(options.provider, {

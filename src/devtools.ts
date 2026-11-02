@@ -237,13 +237,13 @@ export const LLMDevtools: Plugin<[LLMDevtoolsOptions?]> = {
         const s = statsOf(session.id)
 
         payload.state = {
-          'state': [
+          state: [
             { key: 'status', value: session.status.value },
             { key: 'provider', value: session.providerId },
             { key: 'model', value: session.getModel() },
             { key: 'error', value: session.error.value?.message ?? null },
           ],
-          'usage': [
+          usage: [
             { key: 'requests', value: s.requests },
             { key: 'errors', value: s.errors },
             { key: 'prompt tokens', value: s.promptTokens },
