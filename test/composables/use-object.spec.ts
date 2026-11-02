@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { useObject } from '../../src/composables/use-object'
-import type { LLMProvider, ChatRequest, ChatStreamChunk } from '../../src/providers/types'
+import type { LLMProvider, ChatRequest, ChatStreamChunk, ChatStreamResult } from '../../src/providers/types'
 
 function createMockProvider(chunks: ChatStreamChunk[]): LLMProvider {
   return {
@@ -120,5 +120,28 @@ describe('useObject', () => {
     await submit('')
 
     expect(provider.chat).not.toHaveBeenCalled()
+  })
+
+  it('treats stop during a pending provider call as cancellation', async () => {
+    let resolveChat!: (result: ChatStreamResult) => void
+    const provider: LLMProvider = {
+      id: 'pending',
+      supportsStreaming: true,
+      validateConfig: vi.fn(),
+      chat: vi.fn(() => new Promise<ChatStreamResult>(resolve => { resolveChat = resolve })),
+    }
+    const object = useObject<TestSchema>({ provider, model: 'test', schema })
+    const pending = object.submit('extract an object')
+
+    await vi.waitFor(() => expect(resolveChat).toBeTypeOf('function'))
+    object.stop()
+    resolveChat({
+      stream: new ReadableStream<ChatStreamChunk>({ start(controller) { controller.close() } }),
+      response: Promise.resolve({ finishReason: 'stop' }),
+    })
+
+    await expect(pending).resolves.toBeUndefined()
+    expect(object.status.value).toBe('ready')
+    expect(object.error.value).toBeUndefined()
   })
 })

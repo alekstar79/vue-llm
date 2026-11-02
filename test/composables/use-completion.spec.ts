@@ -137,4 +137,41 @@ describe('useCompletion', () => {
     await promise
     expect(status.value).toBe('ready')
   })
+
+  it('does not report an aborted completion as an error when a new one replaces it', async () => {
+    let calls = 0
+    const onError = vi.fn()
+    const provider: LLMProvider = {
+      id: 'replacement',
+      supportsStreaming: true,
+      validateConfig: vi.fn(),
+      chat: vi.fn(async (request: ChatRequest) => {
+        calls++
+        if (calls === 1) {
+          return {
+            stream: new ReadableStream<ChatStreamChunk>({
+              start(controller) {
+                request.signal?.addEventListener('abort', () => {
+                  controller.error(new DOMException('Aborted', 'AbortError'))
+                }, { once: true })
+              },
+            }),
+            response: Promise.resolve({ finishReason: 'stop' as const }),
+          }
+        }
+
+        return createMockProvider([
+          { type: 'text-delta', text: 'second answer' },
+          { type: 'finish', finishReason: 'stop' },
+        ]).chat({ model: 'test', messages: [] })
+      }),
+    }
+    const { complete, completion, error } = useCompletion({ provider, model: 'test', onError })
+
+    await Promise.all([complete('first'), complete('second')])
+
+    expect(onError).not.toHaveBeenCalled()
+    expect(error.value).toBeUndefined()
+    expect(completion.value).toBe('second answer')
+  })
 })

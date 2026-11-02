@@ -51,7 +51,9 @@ export function useObject<T = unknown>(options: UseObjectOptions<T>): UseObjectR
     status.value = 'submitted'
 
     abortController?.abort()
-    abortController = new AbortController()
+    // Keep this request's signal so a stopped request cannot read a cleared controller.
+    const requestController = new AbortController()
+    abortController = requestController
 
     try {
       options.provider.validateConfig()
@@ -69,11 +71,13 @@ export function useObject<T = unknown>(options: UseObjectOptions<T>): UseObjectR
           { role: 'system', content: systemPrompt },
           { role: 'user', content: text },
         ],
-        signal: abortController.signal,
+        signal: requestController.signal,
         providerOptions: {
           response_format: { type: 'json_object' },
         },
       }, id)
+
+      if (requestController.signal.aborted) return object.value
 
       status.value = 'streaming'
       const reader = stream.getReader()
@@ -82,9 +86,10 @@ export function useObject<T = unknown>(options: UseObjectOptions<T>): UseObjectR
       let usage: Usage | undefined
 
       while (true) {
-        if (abortController.signal.aborted) break
+        if (requestController.signal.aborted) break
 
         const { done, value } = await reader.read()
+        if (requestController.signal.aborted) break
         if (done) break
 
         if (value.type === 'text-delta') {
@@ -100,6 +105,7 @@ export function useObject<T = unknown>(options: UseObjectOptions<T>): UseObjectR
       }
 
       reader.releaseLock()
+      if (requestController.signal.aborted) return object.value
 
       try {
         object.value = JSON.parse(accumulated) as T
@@ -113,15 +119,14 @@ export function useObject<T = unknown>(options: UseObjectOptions<T>): UseObjectR
 
       return object.value
     } catch (err) {
-      if (abortController.signal.aborted) {
-        status.value = 'ready'
-        return object.value
-      }
+      if (requestController.signal.aborted) return object.value
       const e = err instanceof Error ? err : new Error(String(err))
       error.value = e
       status.value = 'error'
       options.onError?.(e)
       return undefined
+    } finally {
+      if (abortController === requestController) abortController = null
     }
   }
 
