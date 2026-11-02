@@ -217,4 +217,25 @@ describe('createLLMHandler rateLimit', () => {
 
     expect((await post('2.2.2.2')).status).toBe(200)
   })
+
+  it('uses the configured identity key instead of a caller-controlled forwarding header', async () => {
+    const provider = mockProvider(async () => okResult())
+    const handler = createLLMHandler({
+      provider,
+      rateLimit: {
+        maxRequests: 1,
+        interval: 30_000,
+        key: request => request.headers.get('x-user-id') ?? 'anonymous',
+      },
+    })
+    const post = (userId: string, ip: string) => handler(new Request('http://x/api/chat', {
+      method: 'POST',
+      headers: { 'x-user-id': userId, 'x-forwarded-for': ip },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    }))
+
+    expect((await post('user-a', '1.1.1.1')).status).toBe(200)
+    expect((await post('user-a', '2.2.2.2')).status).toBe(429)
+    expect((await post('user-b', '1.1.1.1')).status).toBe(200)
+  })
 })

@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResult, LLMProvider } from './types'
 import { resolveFilePart } from '../utils/file'
+import { isBrowserContext } from '../utils/browser'
 import { createAPIError } from '../core/errors'
 
 export interface GoogleConfig {
@@ -17,7 +18,8 @@ export function createGoogle(config: GoogleConfig): LLMProvider {
       if (!config.apiKey) {
         throw new Error('[vue-llm] Google AI API key is required. Pass it via createGoogle({ apiKey: "..." })')
       }
-      if (!config.dangerouslyAllowBrowser && typeof window !== 'undefined') {
+      // API keys require explicit opt-in in both window and Worker browser contexts.
+      if (!config.dangerouslyAllowBrowser && isBrowserContext()) {
         throw new Error(
           '[vue-llm] API keys must not be used in the browser. '
           + 'Use a server proxy to keep keys safe. '

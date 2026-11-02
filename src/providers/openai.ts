@@ -1,6 +1,7 @@
 import type { ChatMessage, ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResult, ContentPart, LLMProvider } from './types'
 import { SSEParserStream } from '../core/sse-parser'
 import { decodeBase64Text, isTextMediaType, resolveFilePart } from '../utils/file'
+import { isBrowserContext } from '../utils/browser'
 import { createAPIError } from '../core/errors'
 
 export interface OpenAIConfig {
@@ -18,7 +19,8 @@ export function createOpenAI(config: OpenAIConfig): LLMProvider {
       if (!config.apiKey) {
         throw new Error('[vue-llm] OpenAI API key is required. Pass it via createOpenAI({ apiKey: "..." })')
       }
-      if (!config.dangerouslyAllowBrowser && typeof window !== 'undefined') {
+      // API keys require explicit opt-in in both window and Worker browser contexts.
+      if (!config.dangerouslyAllowBrowser && isBrowserContext()) {
         throw new Error(
           '[vue-llm] API keys must not be used in the browser. '
           + 'Use a server proxy (/api/chat) to keep keys safe. '
@@ -73,6 +75,8 @@ export function createOpenAI(config: OpenAIConfig): LLMProvider {
 
       let resolveResponse: (value: ChatResponse) => void
       const responsePromise = new Promise<ChatResponse>(r => { resolveResponse = r })
+      // OpenAI emits id/name on the first delta; use the stable index for later fragments.
+      const toolCalls = new Map<number, { id?: string; name?: string; started: boolean; pendingArguments: string[] }>()
 
       const stream = response.body
         .pipeThrough(new TextDecoderStream())
@@ -110,31 +114,54 @@ export function createOpenAI(config: OpenAIConfig): LLMProvider {
             }
 
             if (delta.tool_calls) {
-              for (const tc of delta.tool_calls) {
+              for (const [position, tc] of delta.tool_calls.entries()) {
+                const index = tc.index ?? position
+
+                let toolCall = toolCalls.get(index)
+                if (!toolCall) {
+                  toolCall = { started: false, pendingArguments: [] }
+                  toolCalls.set(index, toolCall)
+                }
+
                 if (tc.id) {
+                  toolCall.id = tc.id
+                }
+                if (tc.function?.name) {
+                  toolCall.name = tc.function.name
+                }
+
+                if (toolCall.id && toolCall.name && !toolCall.started) {
                   controller.enqueue({
                     type: 'tool-call-start',
-                    toolCallId: tc.id,
-                    toolName: tc.function?.name ?? '',
+                    toolCallId: toolCall.id,
+                    toolName: toolCall.name,
                   })
+                  toolCall.started = true
+                  for (const args of toolCall.pendingArguments) {
+                    controller.enqueue({ type: 'tool-call-delta', toolCallId: toolCall.id, args })
+                  }
+                  toolCall.pendingArguments = []
                 }
+
                 if (tc.function?.arguments) {
-                  controller.enqueue({
-                    type: 'tool-call-delta',
-                    toolCallId: tc.id ?? '',
-                    args: tc.function.arguments,
-                  })
+                  if (toolCall.started && toolCall.id) {
+                    controller.enqueue({ type: 'tool-call-delta', toolCallId: toolCall.id, args: tc.function.arguments })
+                  } else {
+                    toolCall.pendingArguments.push(tc.function.arguments)
+                  }
                 }
               }
             }
 
             if (choice.finish_reason) {
-              const pendingToolCalls = delta.tool_calls?.filter(tc => tc.id) ?? []
-              for (const tc of pendingToolCalls) {
-                if (tc.id) {
-                  controller.enqueue({ type: 'tool-call-end', toolCallId: tc.id })
+              // Finish chunks usually contain no tool deltas, so close calls from the accumulated state.
+              for (const toolCall of toolCalls.values()) {
+                if (toolCall.started && toolCall.id) {
+                  controller.enqueue({ type: 'tool-call-end', toolCallId: toolCall.id })
                 }
               }
+
+              toolCalls.clear()
 
               const reason = choice.finish_reason === 'tool_calls' ? 'tool-calls'
                 : choice.finish_reason === 'length' ? 'length'
@@ -226,6 +253,7 @@ interface OpenAIChatChunk {
     delta: {
       content?: string
       tool_calls?: {
+        index?: number
         id?: string
         function?: { name?: string; arguments?: string }
       }[]

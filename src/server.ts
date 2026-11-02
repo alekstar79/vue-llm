@@ -20,6 +20,10 @@ export interface LLMHandlerOptions {
 export interface ServerRateLimitOptions {
   maxRequests: number
   interval?: number
+  /**
+   * Choose an authenticated identity or an address resolved by a trusted proxy.
+   * Example: `req => req.headers.get('x-user-id') ?? 'anonymous'`.
+   */
   key?: (request: Request) => string
 }
 
@@ -247,6 +251,8 @@ function createWindowLimiter(options: ServerRateLimitOptions): (request: Request
 }
 
 function defaultRateLimitKey(request: Request): string {
+  // Keep the forwarding-header default for compatibility; use key() unless a trusted proxy overwrites it.
+  // Example: key: req => req.headers.get('x-trusted-client-ip') ?? 'anonymous'
   const forwarded = request.headers.get('x-forwarded-for')
   return forwarded?.split(',')[0].trim()
     || request.headers.get('x-real-ip')
