@@ -243,7 +243,7 @@ describe('createWebLLM', () => {
     const F16 = 'SmolLM2-360M-Instruct-q4f16_1-MLC'
     const F32 = 'SmolLM2-360M-Instruct-q4f32_1-MLC'
 
-    function mockAdapter(adapter: { features: string[], vendor?: string } | null) {
+    function mockAdapter(adapter: { features: string[]; vendor?: string } | null) {
       const requestAdapter = vi.fn(async () => adapter && {
         features: new Set(adapter.features),
         info: { vendor: adapter.vendor ?? 'nvidia' },

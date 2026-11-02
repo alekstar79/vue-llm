@@ -1,0 +1,22 @@
+name: Preview package
+
+# Publishes every pull request to pkg.pr.new and comments an install command,
+# so a fix can be tried before release. Needs https://github.com/apps/pkg-pr-new
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx pkg-pr-new@0.0.93 publish
