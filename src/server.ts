@@ -57,9 +57,9 @@ export function createLLMHandler(options: LLMHandlerOptions) {
       }
     }
 
-    let body: LLMRequestBody
+    let parsedBody: unknown
     try {
-      body = await request.json() as LLMRequestBody
+      parsedBody = await request.json()
     } catch {
       return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
         status: 400,
@@ -67,29 +67,39 @@ export function createLLMHandler(options: LLMHandlerOptions) {
       })
     }
 
-    if (!body.messages?.length) {
+    // Validate the runtime JSON shape before treating messages as ChatMessage[].
+    const requestBody = parsedBody as Record<string, unknown> | null
+    if (
+      !requestBody
+      || typeof requestBody !== 'object'
+      || Array.isArray(requestBody)
+      || !Array.isArray(requestBody.messages)
+      || requestBody.messages.length === 0
+    ) {
       return new Response(JSON.stringify({ error: 'messages array is required' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       })
     }
 
+    let body = parsedBody as LLMRequestBody
     if (options.maxMessages && body.messages.length > options.maxMessages) {
       body.messages = body.messages.slice(-options.maxMessages)
     }
 
-    if (options.onRequest) {
-      body = await options.onRequest(body)
-    }
-
-    const messages: ChatMessage[] = []
-    const systemText = body.system ?? options.system
-    if (systemText) {
-      messages.push({ role: 'system', content: systemText })
-    }
-    messages.push(...body.messages)
-
     try {
+      // Keep user hook failures inside the handler's HTTP error boundary.
+      if (options.onRequest) {
+        body = await options.onRequest(body)
+      }
+
+      const messages: ChatMessage[] = []
+      const systemText = body.system ?? options.system
+      if (systemText) {
+        messages.push({ role: 'system', content: systemText })
+      }
+      messages.push(...body.messages)
+
       options.provider.validateConfig()
 
       const chatRequest = {
