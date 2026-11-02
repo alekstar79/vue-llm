@@ -99,18 +99,23 @@ model.value = 'Llama-3.2-1B-Instruct-q4f16_1-MLC'
 
 ## Modelos de 16 e 32 bits {#16-bit-and-32-bit-models}
 
-A maioria dos modelos vem em duas versões: `q4f16` (menor e mais rápida) e `q4f32`. A versão de 16 bits precisa do recurso `shader-f16` do WebGPU. Sem ele, ou com drivers de GPU com bugs, o modelo carrega, mas responde com texto sem sentido. Verifique o adaptador e use `q4f32` como alternativa:
+A maioria dos modelos vem em duas versões: `q4f16` (menor e mais rápida) e `q4f32`. A versão de 16 bits precisa do recurso `shader-f16` do WebGPU. Sem ele, ou com drivers de GPU com bugs, o modelo carrega, mas responde com texto sem sentido. O caso mais comum são as GPUs Intel: elas anunciam `shader-f16`, mas os modelos de 16 bits respondem com texto sem sentido.
+
+`createWebLLM` cuida disso. Passe um id `q4f16` e, numa GPU que não o executa de forma confiável, o provedor carrega a versão `q4f32` do mesmo modelo:
 
 ```ts
-async function pickPrecision(): Promise<'f16' | 'f32'> {
-  const adapter = await navigator.gpu?.requestAdapter()
-  return adapter?.features.has('shader-f16') ? 'f16' : 'f32'
-}
-
-const model = `Llama-3.2-1B-Instruct-q4${await pickPrecision()}_1-MLC`
+const ai = createWebLLM({ createEngine: CreateMLCEngine })
+await ai.load('Llama-3.2-1B-Instruct-q4f16_1-MLC')
+ai.loadedModel // 'Llama-3.2-1B-Instruct-q4f32_1-MLC' numa GPU sem f16 confiável
 ```
 
-Se os usuários ainda virem texto sem sentido com `q4f16`, ofereça uma opção para a versão de 32 bits, como faz o [playground](../playground).
+A opção `precision` substitui a verificação: `'f16'` ou `'f32'` sempre carregam essa versão, `'auto'` é o padrão. Se os usuários ainda virem texto sem sentido, ofereça uma opção de 32 bits, como faz o [playground](../playground):
+
+```ts
+createWebLLM({ createEngine: CreateMLCEngine, precision: force32.value ? 'f32' : 'auto' })
+```
+
+`detectWebGPUPrecision()` retorna a mesma resposta que o provedor usa, por exemplo para mostrar o tamanho de download correto antes de carregar.
 
 ## Escolhendo um modelo {#choosing-a-model}
 

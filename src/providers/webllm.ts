@@ -39,14 +39,23 @@ export interface WebLLMConfig {
   chatOptions?: Record<string, unknown>
   /** Download / compile progress while a model is loading */
   onProgress?: (report: WebLLMProgress) => void
+  /**
+   * Which build of a model to load. Most models ship 16-bit (`q4f16`) and 32-bit (`q4f32`) builds.
+   * - `'auto'` (default): swaps a 16-bit id for its 32-bit build when the GPU can't run f16 reliably,
+   *   see {@link detectWebGPUPrecision}
+   * - `'f16'` / `'f32'`: always load that build
+   */
+  precision?: WebLLMPrecision | 'auto'
 }
+
+export type WebLLMPrecision = 'f16' | 'f32'
 
 export interface WebLLMProvider extends LLMProvider {
   /** Download and compile a model ahead of the first message */
   load(model: string): Promise<void>
   /** Free GPU memory. The next request loads the model again. */
   unload(): Promise<void>
-  /** Model currently on the GPU, if any */
+  /** Model currently on the GPU, if any. Differs from the requested id when `precision` swapped the build. */
   readonly loadedModel: string | undefined
 }
 
@@ -55,37 +64,91 @@ export function isWebGPUSupported(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator && !!(navigator as { gpu?: unknown }).gpu
 }
 
+interface GPUAdapterLike {
+  features: { has(feature: string): boolean }
+  info?: { vendor?: string }
+}
+
+/**
+ * The model build this GPU runs reliably: `'f32'` when there is no adapter, no `shader-f16` feature,
+ * or the GPU is Intel, whose drivers report `shader-f16` but return gibberish from f16 models.
+ */
+export async function detectWebGPUPrecision(): Promise<WebLLMPrecision> {
+  try {
+    const gpu = (navigator as { gpu?: { requestAdapter(): Promise<GPUAdapterLike | null> } }).gpu
+    const adapter = await gpu?.requestAdapter()
+    if (!adapter?.features.has('shader-f16')) return 'f32'
+    return adapter.info?.vendor?.toLowerCase().includes('intel') ? 'f32' : 'f16'
+  } catch {
+    return 'f32'
+  }
+}
+
+// MLC ids encode the build as `-q4f16_1-`, `-q0f32-` and so on
+const BUILD_IN_ID = /-q(\d)f(16|32)(_\d+)?-/
+
 export function createWebLLM(config: WebLLMConfig): WebLLMProvider {
   let enginePromise: Promise<WebLLMEngine> | undefined
+  // The id passed to load() and the id on the GPU; they differ when the build was swapped
+  let requestedModel: string | undefined
   let loadedModel: string | undefined
   let loading: Promise<void> | undefined
+  let detected: Promise<WebLLMPrecision> | undefined
 
   const onProgress = (report: WebLLMProgress): void => config.onProgress?.(report)
 
+  async function resolveModel(model: string): Promise<string> {
+    const build = BUILD_IN_ID.exec(model)
+    if (!build) return model
+
+    const setting = config.precision ?? 'auto'
+    // auto only ever moves f16 to f32; an f32 id was picked on purpose
+    if (setting === 'auto' && build[2] === '32') return model
+
+    const precision = setting === 'auto' ? await (detected ??= detectWebGPUPrecision()) : setting
+    return model.replace(BUILD_IN_ID, `-q${build[1]}${precision}${build[3] ?? ''}-`)
+  }
+
+  async function loadEngine(model: string): Promise<void> {
+    if (!enginePromise) {
+      enginePromise = config.createEngine(
+        model,
+        { ...config.engineConfig, initProgressCallback: onProgress },
+        config.chatOptions,
+      )
+      try {
+        await enginePromise
+      } catch (error) {
+        enginePromise = undefined
+        throw error
+      }
+    } else {
+      await (await enginePromise).reload(model, config.chatOptions)
+    }
+  }
+
   function load(model: string): Promise<void> {
-    if (loadedModel === model && !loading) return Promise.resolve()
+    if (requestedModel === model && !loading) return Promise.resolve()
 
     // Serialize loads so a model switch never races an earlier one
     const previous = loading ?? Promise.resolve()
     const next = previous.catch(() => {}).then(async () => {
-      if (loadedModel === model) return
-      if (!enginePromise) {
-        enginePromise = config.createEngine(
-          model,
-          { ...config.engineConfig, initProgressCallback: onProgress },
-          config.chatOptions,
-        )
-        try {
-          await enginePromise
-        } catch (error) {
-          enginePromise = undefined
-          throw error
-        }
-      } else {
-        loadedModel = undefined
-        await (await enginePromise).reload(model, config.chatOptions)
+      if (requestedModel === model) return
+      requestedModel = undefined
+      loadedModel = undefined
+
+      let resolved = await resolveModel(model)
+      try {
+        await loadEngine(resolved)
+      } catch (error) {
+        // Not every model has the other build (gemma3-1b-it has no q4f32), so fall back to the id as given
+        if (resolved === model || (error as Error | undefined)?.name !== 'ModelNotFoundError') throw error
+        console.warn(`[vue-llm] ${resolved} is not available, loading ${model} instead`)
+        resolved = model
+        await loadEngine(resolved)
       }
-      loadedModel = model
+      requestedModel = model
+      loadedModel = resolved
     })
 
     loading = next
@@ -121,6 +184,7 @@ export function createWebLLM(config: WebLLMConfig): WebLLMProvider {
     async unload() {
       const engine = enginePromise
       enginePromise = undefined
+      requestedModel = undefined
       loadedModel = undefined
       if (engine) await (await engine).unload()
     },

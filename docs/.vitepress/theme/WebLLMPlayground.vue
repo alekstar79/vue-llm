@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useChat } from '../../../src/composables/use-chat'
-import { createWebLLM, isWebGPUSupported, type WebLLMProvider } from '../../../src/providers/webllm'
+import { createWebLLM, detectWebGPUPrecision, isWebGPUSupported, type WebLLMProvider } from '../../../src/providers/webllm'
 import { renderMarkdown } from '../../../src/core/markdown'
 import type { UIMessage } from '../../../src/types'
 import { track } from './analytics'
 
 // Each model ships 16-bit (q4f16) and 32-bit (q4f32) builds. f16 is smaller and faster but needs the
-// WebGPU `shader-f16` feature; without it, or with buggy drivers, f16 models answer with gibberish.
+// WebGPU `shader-f16` feature; without it, or with buggy drivers (Intel), f16 models answer with gibberish.
 const MODELS = [
   { base: 'SmolLM2-360M-Instruct', label: 'SmolLM2 360M', size: { f16: '~380 MB', f32: '~580 MB' }, note: 'fastest download' },
   { base: 'Qwen2.5-0.5B-Instruct', label: 'Qwen2.5 0.5B', size: { f16: '~950 MB', f32: '~1.1 GB' }, note: 'good all-rounder' },
@@ -131,19 +131,9 @@ watch(
 
 const suggestions = ['Explain Vue reactivity in two sentences', 'Write a haiku about TypeScript', 'What is WebGPU?']
 
-async function detectF16(): Promise<void> {
-  try {
-    const gpu = (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<{ features: Set<string> } | null> } }).gpu
-    const adapter = await gpu?.requestAdapter()
-    f16Supported.value = !!adapter?.features.has('shader-f16')
-  } catch {
-    f16Supported.value = false
-  }
-}
-
-onMounted(() => {
+onMounted(async () => {
   if (!supported) track('playground_unsupported', { userAgent: navigator.userAgent.slice(0, 120) })
-  else void detectF16()
+  else f16Supported.value = (await detectWebGPUPrecision()) === 'f16'
 })
 
 onBeforeUnmount(() => {
@@ -175,7 +165,7 @@ onBeforeUnmount(() => {
       <label class="precision">
         <input v-model="force32" type="checkbox" :disabled="!f16Supported || loadState === 'loading' || busy">
         <span v-if="f16Supported">32-bit mode — turn on if answers look like gibberish (larger download)</span>
-        <span v-else>Using 32-bit models: this GPU has no 16-bit shader support</span>
+        <span v-else>Using 32-bit models: 16-bit ones don't run reliably on this GPU</span>
       </label>
 
       <div v-if="loadState === 'loading'" class="progress">

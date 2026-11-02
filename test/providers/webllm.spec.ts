@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { createWebLLM, createThinkSplitter, type CreateWebLLMEngine, type WebLLMChunk, type WebLLMEngine } from '../../src/providers/webllm'
+import { createWebLLM, createThinkSplitter, type CreateWebLLMEngine, type WebLLMChunk, type WebLLMConfig, type WebLLMEngine } from '../../src/providers/webllm'
 import type { ChatStreamChunk } from '../../src/providers/types'
 
 async function drainStream(stream: ReadableStream<ChatStreamChunk>): Promise<ChatStreamChunk[]> {
@@ -237,6 +237,113 @@ describe('createWebLLM', () => {
 
     delete (navigator as { gpu?: unknown }).gpu
     expect(() => createWebLLM({ createEngine: async () => fakeEngine().engine }).validateConfig()).toThrow('WebGPU')
+  })
+
+  describe('precision', () => {
+    const F16 = 'SmolLM2-360M-Instruct-q4f16_1-MLC'
+    const F32 = 'SmolLM2-360M-Instruct-q4f32_1-MLC'
+
+    function mockAdapter(adapter: { features: string[], vendor?: string } | null) {
+      const requestAdapter = vi.fn(async () => adapter && {
+        features: new Set(adapter.features),
+        info: { vendor: adapter.vendor ?? 'nvidia' },
+      })
+      Object.defineProperty(navigator, 'gpu', { value: { requestAdapter }, configurable: true })
+      return requestAdapter
+    }
+
+    async function loadedWith(model: string, config: Partial<WebLLMConfig> = {}) {
+      const { engine } = fakeEngine()
+      const createEngine = vi.fn<CreateWebLLMEngine>(async () => engine)
+      const ai = createWebLLM({ createEngine, ...config })
+      await ai.load(model)
+      return { ai, engine, model: createEngine.mock.calls[0][0] }
+    }
+
+    it('keeps f16 builds on GPUs with shader-f16', async () => {
+      mockAdapter({ features: ['shader-f16'] })
+      expect((await loadedWith(F16)).model).toBe(F16)
+    })
+
+    it('loads the f32 build without shader-f16', async () => {
+      mockAdapter({ features: [] })
+      const { ai, model } = await loadedWith(F16)
+      expect(model).toBe(F32)
+      expect(ai.loadedModel).toBe(F32)
+    })
+
+    it('loads the f32 build on Intel GPUs even with shader-f16', async () => {
+      mockAdapter({ features: ['shader-f16'], vendor: 'intel' })
+      expect((await loadedWith(F16)).model).toBe(F32)
+    })
+
+    it('loads the f32 build when no adapter is available', async () => {
+      mockAdapter(null)
+      expect((await loadedWith(F16)).model).toBe(F32)
+    })
+
+    it('follows an explicit precision without asking the GPU', async () => {
+      const requestAdapter = mockAdapter({ features: [] })
+      expect((await loadedWith(F16, { precision: 'f16' })).model).toBe(F16)
+      expect((await loadedWith(F32, { precision: 'f16' })).model).toBe(F16)
+      expect((await loadedWith(F16, { precision: 'f32' })).model).toBe(F32)
+      expect(requestAdapter).not.toHaveBeenCalled()
+    })
+
+    it('leaves f32 ids and ids without a build alone', async () => {
+      const requestAdapter = mockAdapter({ features: ['shader-f16'] })
+      expect((await loadedWith(F32)).model).toBe(F32)
+      expect((await loadedWith('my-custom-model')).model).toBe('my-custom-model')
+      expect(requestAdapter).not.toHaveBeenCalled()
+    })
+
+    it('falls back to the requested build when the other one does not exist', async () => {
+      mockAdapter({ features: [] })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const notFound = Object.assign(new Error('Cannot find model record'), { name: 'ModelNotFoundError' })
+      const { engine } = fakeEngine()
+      const createEngine = vi.fn<CreateWebLLMEngine>()
+        .mockRejectedValueOnce(notFound)
+        .mockResolvedValueOnce(engine)
+      const ai = createWebLLM({ createEngine })
+
+      await ai.load(F16)
+      expect(createEngine.mock.calls.map(call => call[0])).toEqual([F32, F16])
+      expect(ai.loadedModel).toBe(F16)
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('is not available'))
+
+      // the same on a model switch, through reload
+      engine.reload.mockRejectedValueOnce(notFound)
+      await ai.load('gemma3-1b-it-q4f16_1-MLC')
+      expect(engine.reload).toHaveBeenNthCalledWith(1, 'gemma3-1b-it-q4f32_1-MLC', undefined)
+      expect(engine.reload).toHaveBeenNthCalledWith(2, 'gemma3-1b-it-q4f16_1-MLC', undefined)
+      expect(ai.loadedModel).toBe('gemma3-1b-it-q4f16_1-MLC')
+      warn.mockRestore()
+    })
+
+    it('does not fall back on other load errors', async () => {
+      mockAdapter({ features: [] })
+      const createEngine = vi.fn<CreateWebLLMEngine>().mockRejectedValue(new Error('device lost'))
+      const ai = createWebLLM({ createEngine })
+
+      await expect(ai.load(F16)).rejects.toThrow('device lost')
+      expect(createEngine).toHaveBeenCalledTimes(1)
+    })
+
+    it('treats a chat with the requested id as the loaded model', async () => {
+      mockAdapter({ features: [] })
+      const { ai, engine } = await loadedWith(F16)
+      await drainStream((await ai.chat({ model: F16, messages: [] })).stream)
+      expect(engine.reload).not.toHaveBeenCalled()
+    })
+
+    it('asks the GPU once across model switches', async () => {
+      const requestAdapter = mockAdapter({ features: [] })
+      const { ai, engine } = await loadedWith(F16)
+      await ai.load('Llama-3.2-1B-Instruct-q4f16_1-MLC')
+      expect(engine.reload).toHaveBeenCalledWith('Llama-3.2-1B-Instruct-q4f32_1-MLC', undefined)
+      expect(requestAdapter).toHaveBeenCalledTimes(1)
+    })
   })
 })
 
