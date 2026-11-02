@@ -1,6 +1,6 @@
 {
   "name": "vue-llm",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "type": "module",
   "description": "AI SDK for Vue and Nuxt: streaming useChat, tool calling, Generative UI and in-browser WebGPU models for OpenAI, Anthropic, Gemini and Ollama.",
   "keywords": [
