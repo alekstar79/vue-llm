@@ -99,18 +99,23 @@ model.value = 'Llama-3.2-1B-Instruct-q4f16_1-MLC'
 
 ## Modelos de 16 y 32 bits {#16-bit-and-32-bit-models}
 
-La mayoría de los modelos vienen en dos versiones: `q4f16` (más pequeña y rápida) y `q4f32`. La versión de 16 bits necesita la función `shader-f16` de WebGPU. Sin ella, o con drivers de GPU defectuosos, el modelo carga pero responde con texto sin sentido. Comprueba el adaptador y usa `q4f32` como alternativa:
+La mayoría de los modelos vienen en dos versiones: `q4f16` (más pequeña y rápida) y `q4f32`. La versión de 16 bits necesita la función `shader-f16` de WebGPU. Sin ella, o con drivers de GPU defectuosos, el modelo carga pero responde con texto sin sentido. El caso más común son las GPU Intel: anuncian `shader-f16`, pero los modelos de 16 bits devuelven texto sin sentido.
+
+`createWebLLM` se encarga de esto. Pasa un id `q4f16` y, en una GPU que no lo ejecuta de forma fiable, el proveedor carga la versión `q4f32` del mismo modelo:
 
 ```ts
-async function pickPrecision(): Promise<'f16' | 'f32'> {
-  const adapter = await navigator.gpu?.requestAdapter()
-  return adapter?.features.has('shader-f16') ? 'f16' : 'f32'
-}
-
-const model = `Llama-3.2-1B-Instruct-q4${await pickPrecision()}_1-MLC`
+const ai = createWebLLM({ createEngine: CreateMLCEngine })
+await ai.load('Llama-3.2-1B-Instruct-q4f16_1-MLC')
+ai.loadedModel // 'Llama-3.2-1B-Instruct-q4f32_1-MLC' en una GPU sin f16 fiable
 ```
 
-Si los usuarios siguen viendo texto sin sentido con `q4f16`, ofrece un interruptor a la versión de 32 bits, como hace el [playground](../playground).
+La opción `precision` anula la comprobación: `'f16'` o `'f32'` siempre cargan esa versión, `'auto'` es el valor por defecto. Si los usuarios siguen viendo texto sin sentido, ofrece un interruptor a 32 bits, como hace el [playground](../playground):
+
+```ts
+createWebLLM({ createEngine: CreateMLCEngine, precision: force32.value ? 'f32' : 'auto' })
+```
+
+`detectWebGPUPrecision()` devuelve la misma respuesta que usa el proveedor, por ejemplo para mostrar el tamaño de descarga correcto antes de cargar.
 
 ## Elegir un modelo {#choosing-a-model}
 

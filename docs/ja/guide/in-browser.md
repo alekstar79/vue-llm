@@ -99,18 +99,23 @@ model.value = 'Llama-3.2-1B-Instruct-q4f16_1-MLC'
 
 ## 16 ビットと 32 ビットのモデル {#16-bit-and-32-bit-models}
 
-多くのモデルには `q4f16`（小さく高速）と `q4f32` の 2 種類のビルドがあります。16 ビット版には WebGPU の `shader-f16` 機能が必要です。これがない場合や GPU ドライバーに不具合がある場合、モデルは読み込めても意味不明な回答を返します。アダプターを確認して `q4f32` にフォールバックしてください：
+多くのモデルには `q4f16`（小さく高速）と `q4f32` の 2 種類のビルドがあります。16 ビット版には WebGPU の `shader-f16` 機能が必要です。これがない場合や GPU ドライバーに不具合がある場合、モデルは読み込めても意味不明な回答を返します。よくあるのは Intel GPU で、`shader-f16` を報告するのに 16 ビットモデルが意味不明な回答を返します。
+
+`createWebLLM` がこれを自動で処理します。`q4f16` の id を渡すと、16 ビットを安定して実行できない GPU では、同じモデルの `q4f32` ビルドを読み込みます：
 
 ```ts
-async function pickPrecision(): Promise<'f16' | 'f32'> {
-  const adapter = await navigator.gpu?.requestAdapter()
-  return adapter?.features.has('shader-f16') ? 'f16' : 'f32'
-}
-
-const model = `Llama-3.2-1B-Instruct-q4${await pickPrecision()}_1-MLC`
+const ai = createWebLLM({ createEngine: CreateMLCEngine })
+await ai.load('Llama-3.2-1B-Instruct-q4f16_1-MLC')
+ai.loadedModel // 'Llama-3.2-1B-Instruct-q4f32_1-MLC' f16 が不安定な GPU の場合
 ```
 
-それでも `q4f16` で意味不明な回答が出る場合は、[プレイグラウンド](../playground)のように 32 ビット版への切り替えを用意してください。
+`precision` オプションでチェックを上書きできます。`'f16'` または `'f32'` は常にそのビルドを読み込み、既定値は `'auto'` です。それでも意味不明な回答が出る場合は、[プレイグラウンド](../playground)のように 32 ビットへの切り替えを用意してください：
+
+```ts
+createWebLLM({ createEngine: CreateMLCEngine, precision: force32.value ? 'f32' : 'auto' })
+```
+
+`detectWebGPUPrecision()` はプロバイダーと同じ判定結果を返します。読み込み前に正しいダウンロードサイズを表示する場合などに使えます。
 
 ## モデルの選び方 {#choosing-a-model}
 

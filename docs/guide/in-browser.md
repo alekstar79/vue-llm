@@ -99,18 +99,23 @@ model.value = 'Llama-3.2-1B-Instruct-q4f16_1-MLC'
 
 ## 16-bit and 32-bit models
 
-Most models come in two builds: `q4f16` (smaller and faster) and `q4f32`. The 16-bit build needs the WebGPU `shader-f16` feature. Without it, or with buggy GPU drivers, the model loads fine but answers with gibberish. Check the adapter and fall back to `q4f32`:
+Most models ship two builds: `q4f16` (smaller and faster) and `q4f32`. The 16-bit build needs the WebGPU `shader-f16` feature. Without it, or with buggy GPU drivers, the model loads but answers with gibberish. Intel GPUs are the common case: they report `shader-f16`, yet return gibberish from 16-bit models.
+
+`createWebLLM` handles this for you. Pass a `q4f16` id, and on a GPU that can't run it reliably the provider loads the `q4f32` build of the same model:
 
 ```ts
-async function pickPrecision(): Promise<'f16' | 'f32'> {
-  const adapter = await navigator.gpu?.requestAdapter()
-  return adapter?.features.has('shader-f16') ? 'f16' : 'f32'
-}
-
-const model = `Llama-3.2-1B-Instruct-q4${await pickPrecision()}_1-MLC`
+const ai = createWebLLM({ createEngine: CreateMLCEngine })
+await ai.load('Llama-3.2-1B-Instruct-q4f16_1-MLC')
+ai.loadedModel // 'Llama-3.2-1B-Instruct-q4f32_1-MLC' on a GPU without reliable f16
 ```
 
-If users still see gibberish on `q4f16`, offer a switch to the 32-bit build, like the [playground](../playground) does.
+The `precision` option overrides the check: `'f16'` or `'f32'` always loads that build, `'auto'` is the default. If users still see gibberish, give them a 32-bit switch, as the [playground](../playground) does:
+
+```ts
+createWebLLM({ createEngine: CreateMLCEngine, precision: force32.value ? 'f32' : 'auto' })
+```
+
+`detectWebGPUPrecision()` returns the same answer the provider uses, for example to show the right download size before loading.
 
 ## Choosing a model
 

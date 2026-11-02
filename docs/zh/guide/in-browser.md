@@ -99,18 +99,23 @@ model.value = 'Llama-3.2-1B-Instruct-q4f16_1-MLC'
 
 ## 16 位与 32 位模型 {#16-bit-and-32-bit-models}
 
-大多数模型提供两种构建：`q4f16`（更小、更快）和 `q4f32`。16 位构建需要 WebGPU 的 `shader-f16` 特性。如果不支持，或显卡驱动有问题，模型虽然能加载，但会输出乱码。请检查适配器，并回退到 `q4f32`：
+大多数模型提供两种构建：`q4f16`（更小、更快）和 `q4f32`。16 位构建需要 WebGPU 的 `shader-f16` 特性。如果不支持，或显卡驱动有问题，模型虽然能加载，但会输出乱码。最常见的是 Intel 显卡：它们声明支持 `shader-f16`，但 16 位模型会输出乱码。
+
+`createWebLLM` 会自动处理。传入 `q4f16` 的 id，在无法可靠运行 16 位的显卡上，提供方会加载同一模型的 `q4f32` 构建：
 
 ```ts
-async function pickPrecision(): Promise<'f16' | 'f32'> {
-  const adapter = await navigator.gpu?.requestAdapter()
-  return adapter?.features.has('shader-f16') ? 'f16' : 'f32'
-}
-
-const model = `Llama-3.2-1B-Instruct-q4${await pickPrecision()}_1-MLC`
+const ai = createWebLLM({ createEngine: CreateMLCEngine })
+await ai.load('Llama-3.2-1B-Instruct-q4f16_1-MLC')
+ai.loadedModel // 'Llama-3.2-1B-Instruct-q4f32_1-MLC' 在 f16 不可靠的显卡上
 ```
 
-如果用户在 `q4f16` 下仍然看到乱码，可以像[在线体验](../playground)那样提供切换到 32 位构建的开关。
+`precision` 选项可以覆盖检测：`'f16'` 或 `'f32'` 总是加载对应构建，默认值为 `'auto'`。如果用户仍然看到乱码，可以像[在线体验](../playground)那样提供切换到 32 位的开关：
+
+```ts
+createWebLLM({ createEngine: CreateMLCEngine, precision: force32.value ? 'f32' : 'auto' })
+```
+
+`detectWebGPUPrecision()` 返回与提供方相同的判断结果，例如可在加载前显示正确的下载大小。
 
 ## 选择模型 {#choosing-a-model}
 

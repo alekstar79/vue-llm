@@ -39,6 +39,7 @@ export default defineNuxtModule({
       { name: 'createSSEProvider', from: resolver.resolve('./providers') },
       { name: 'createWebLLM', from: resolver.resolve('./providers') },
       { name: 'isWebGPUSupported', from: resolver.resolve('./providers') },
+      { name: 'detectWebGPUPrecision', from: resolver.resolve('./providers') },
     ])
 
     // Lowest priority, so an app component with the same name wins
