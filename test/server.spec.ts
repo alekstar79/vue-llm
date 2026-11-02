@@ -76,6 +76,15 @@ describe('createLLMHandler', () => {
     expect(body.error).toContain('messages')
   })
 
+  it('rejects a non-array messages value without calling the provider', async () => {
+    const provider = createMockProvider([])
+    const handler = createLLMHandler({ provider })
+    const res = await handler(makeRequest({ messages: 'not-an-array' }))
+
+    expect(res.status).toBe(400)
+    expect(provider.chat).not.toHaveBeenCalled()
+  })
+
   it('prepends system message from options', async () => {
     const provider = createMockProvider([
       { type: 'finish', finishReason: 'stop' },
@@ -143,6 +152,19 @@ describe('createLLMHandler', () => {
 
     const chatCall = (provider.chat as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(chatCall.messages[0].content).toBe('intercepted')
+  })
+
+  it('returns an HTTP error when onRequest throws', async () => {
+    const provider = createMockProvider([])
+    const handler = createLLMHandler({
+      provider,
+      onRequest: () => { throw new Error('invalid request') },
+    })
+    const res = await handler(makeRequest({ messages: [{ role: 'user', content: 'hi' }] }))
+
+    expect(res.status).toBe(500)
+    expect(await res.json()).toMatchObject({ error: 'invalid request' })
+    expect(provider.chat).not.toHaveBeenCalled()
   })
 
   it('returns 500 on provider error', async () => {
