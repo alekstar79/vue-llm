@@ -22,7 +22,7 @@ function apiError(status: number, retryAfter?: number): LLMAPIError {
 }
 
 function mockProvider(chat: (req: ChatRequest) => Promise<ChatStreamResult>): LLMProvider {
-  return { id: 'mock', supportsStreaming: true, validateConfig: () => { }, chat: vi.fn(chat) }
+  return { id: 'mock', supportsStreaming: true, validateConfig: () => {}, chat: vi.fn(chat) }
 }
 
 const request: ChatRequest = { model: 'm', messages: [{ role: 'user', content: 'hi' }] }

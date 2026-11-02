@@ -163,11 +163,9 @@ export function createOpenAI(config: OpenAIConfig): LLMProvider {
 
               toolCalls.clear()
 
-              const reason = choice.finish_reason === 'tool_calls'
-                ? 'tool-calls'
-                : choice.finish_reason === 'length'
-                  ? 'length'
-                  : 'stop'
+              const reason = choice.finish_reason === 'tool_calls' ? 'tool-calls'
+                : choice.finish_reason === 'length' ? 'length'
+                : 'stop'
 
               controller.enqueue({ type: 'finish', finishReason: reason, usage: undefined })
             }

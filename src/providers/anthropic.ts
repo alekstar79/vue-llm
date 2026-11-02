@@ -138,11 +138,9 @@ export function createAnthropic(config: AnthropicConfig): LLMProvider {
               case 'message_delta': {
                 const delta = parsed.delta as { stop_reason?: string }
                 const usage = parsed.usage as { output_tokens?: number } | undefined
-                const reason = delta?.stop_reason === 'tool_use'
-                  ? 'tool-calls'
-                  : delta?.stop_reason === 'max_tokens'
-                    ? 'length'
-                    : 'stop'
+                const reason = delta?.stop_reason === 'tool_use' ? 'tool-calls'
+                  : delta?.stop_reason === 'max_tokens' ? 'length'
+                  : 'stop'
 
                 controller.enqueue({
                   type: 'finish',
