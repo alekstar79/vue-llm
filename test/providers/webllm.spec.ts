@@ -30,9 +30,9 @@ function fakeEngine(script: WebLLMChunk[] = []) {
         }),
       },
     },
-    reload: vi.fn(async () => {}),
+    reload: vi.fn(async () => { }),
     interruptGenerate: vi.fn(),
-    unload: vi.fn(async () => {}),
+    unload: vi.fn(async () => { }),
   } satisfies WebLLMEngine
   return { engine, requests }
 }
@@ -139,6 +139,34 @@ describe('createWebLLM', () => {
     expect(ai.loadedModel).toBeUndefined()
     await ai.load('m')
     expect(createEngine).toHaveBeenCalledTimes(2)
+  })
+
+  it('unloads after a pending load and allows loading again', async () => {
+    const firstEngine = fakeEngine().engine
+    const secondEngine = fakeEngine().engine
+    let resolveStarted!: () => void
+    let resolveFirstEngine!: (engine: WebLLMEngine) => void
+    const started = new Promise<void>(resolve => { resolveStarted = resolve })
+    const createEngine = vi.fn<CreateWebLLMEngine>()
+      .mockImplementationOnce(async () => {
+        resolveStarted()
+        return await new Promise(resolve => { resolveFirstEngine = resolve })
+      })
+      .mockResolvedValueOnce(secondEngine)
+    const ai = createWebLLM({ createEngine })
+
+    const loading = ai.load('m')
+    await started
+    const unloading = ai.unload()
+    resolveFirstEngine(firstEngine)
+    await Promise.all([loading, unloading])
+
+    expect(firstEngine.unload).toHaveBeenCalledOnce()
+    expect(ai.loadedModel).toBeUndefined()
+
+    await drainStream((await ai.chat({ model: 'm', messages: [] })).stream)
+    expect(createEngine).toHaveBeenCalledTimes(2)
+    expect(ai.loadedModel).toBe('m')
   })
 
   it('maps tool calls by index and passes tools through', async () => {
@@ -299,7 +327,7 @@ describe('createWebLLM', () => {
 
     it('falls back to the requested build when the other one does not exist', async () => {
       mockAdapter({ features: [] })
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => { })
       const notFound = Object.assign(new Error('Cannot find model record'), { name: 'ModelNotFoundError' })
       const { engine } = fakeEngine()
       const createEngine = vi.fn<CreateWebLLMEngine>()

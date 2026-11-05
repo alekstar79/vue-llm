@@ -127,12 +127,21 @@ export function createWebLLM(config: WebLLMConfig): WebLLMProvider {
     }
   }
 
+  function serialize(operation: () => Promise<void>): Promise<void> {
+    const previous = loading ?? Promise.resolve()
+    const next = previous.catch(() => { }).then(operation)
+    loading = next
+    const clear = (): void => {
+      if (loading === next) loading = undefined
+    }
+    next.then(clear, clear)
+    return next
+  }
+
   function load(model: string): Promise<void> {
     if (requestedModel === model && !loading) return Promise.resolve()
 
-    // Serialize loads so a model switch never races an earlier one
-    const previous = loading ?? Promise.resolve()
-    const next = previous.catch(() => {}).then(async () => {
+    return serialize(async () => {
       if (requestedModel === model) return
       requestedModel = undefined
       loadedModel = undefined
@@ -150,13 +159,6 @@ export function createWebLLM(config: WebLLMConfig): WebLLMProvider {
       requestedModel = model
       loadedModel = resolved
     })
-
-    loading = next
-    const clear = (): void => {
-      if (loading === next) loading = undefined
-    }
-    next.then(clear, clear)
-    return next
   }
 
   return {
@@ -181,12 +183,14 @@ export function createWebLLM(config: WebLLMConfig): WebLLMProvider {
 
     load,
 
-    async unload() {
-      const engine = enginePromise
-      enginePromise = undefined
-      requestedModel = undefined
-      loadedModel = undefined
-      if (engine) await (await engine).unload()
+    unload() {
+      return serialize(async () => {
+        const engine = enginePromise
+        enginePromise = undefined
+        requestedModel = undefined
+        loadedModel = undefined
+        if (engine) await (await engine).unload()
+      })
     },
 
     async chat(request: ChatRequest): Promise<ChatStreamResult> {
@@ -228,7 +232,7 @@ export function createWebLLM(config: WebLLMConfig): WebLLMProvider {
         rejectResponse = reject
       })
       // Consumers may only read the stream; don't surface an unhandled rejection
-      response.catch(() => {})
+      response.catch(() => { })
 
       const iterator = iterable[Symbol.asyncIterator]()
       const think = createThinkSplitter()
